@@ -50,7 +50,7 @@ defmodule Cluster.Strategy.Postgres do
       Supervisor.child_spec({Backoff, worker_opts}, id: :worker)
     ]
 
-    Supervisor.init(children, strategy: :one_for_all)
+    Supervisor.start_link(children, strategy: :one_for_all)
   end
 
 end
