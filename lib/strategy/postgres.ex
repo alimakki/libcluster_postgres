@@ -1,15 +1,7 @@
 defmodule Cluster.Strategy.Postgres do
   @moduledoc """
-  config :libcluster,
-    topologies: [
-      postgres_example: [
-        strategy: #{__MODULE__},
-        config: [
-          hostname: "yourdbhost",
-          database: "example",
-          username: "username",
-          password: "password",
-        ]
+  Custom stategy where each node writes its cluster info to the `cluster_node` table
+  Inspired/Forked from https://github.com/kevbuchanan/libcluster_postgres
   """
 
   use Supervisor
@@ -19,27 +11,46 @@ defmodule Cluster.Strategy.Postgres do
   alias Cluster.Strategy.Postgres.Worker
   alias Cluster.Strategy.Postgres.Backoff
 
+  alias Cluster.Logger
+
   def start_link(opts) do
     Supervisor.start_link(__MODULE__, opts)
   end
 
-  def init([%State{config: config} = state]) do
-    connection = __MODULE__.Connection
-    notifications = __MODULE__.Notifications
+  @impl true
+  def init([%State{meta: nil} = state]) do
+    Logger.debug(state.topology, "starting postgrex libcluster strategy")
+
     meta = %{
-      connection: connection,
-      notifications: notifications,
+      connection: __MODULE__.Connection,
+      notifications: __MODULE__.Notifications,
     }
-    state = %State{state | :meta => meta}
+
+    init([%State{state | :meta => meta}])
+  end
+
+  def init([%State{meta: meta, config: config} = state] = opts) do
+    IO.inspect("initializing Postgres strategy")
+
+    IO.inspect(meta, label: "PostgresStrategy meta")
+
+    postgrex_opts = Keyword.put(config, :name, meta.connection)
+
+    notifications_opts = {Notifications, Keyword.put(config, :name, meta.notifications)}
+    worker_opts = {Worker, opts}
+
+    IO.inspect(postgrex_opts, label: "postgres_opts")
+    IO.inspect(notifications_opts, label: "notification_opts")
 
     {:ok, _} = Application.ensure_all_started(:postgrex)
 
     children = [
-      worker(Postgrex, [Keyword.put(config, :name, connection)]),
-      worker(Backoff, [Notifications, Keyword.put(config, :name, notifications)], id: :notifications),
-      worker(Backoff, [Worker, state], id: :worker)
+      Supervisor.child_spec({Postgrex, postgrex_opts}, id: :postgres_libcluster),
+      Supervisor.child_spec({Backoff, notifications_opts}, id: :notifications),
+      Supervisor.child_spec({Backoff, worker_opts}, id: :worker)
     ]
 
-    supervise(children, strategy: :one_for_all)
+    Supervisor.init(children, strategy: :one_for_all)
   end
+
 end

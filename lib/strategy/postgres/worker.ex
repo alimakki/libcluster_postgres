@@ -12,7 +12,11 @@ defmodule Cluster.Strategy.Postgres.Worker do
     GenServer.start_link(__MODULE__, opts)
   end
 
-  def init(%State{config: config, meta: meta} = state) do
+  @impl true
+  def init([%State{config: config, meta: meta} = state]) do
+
+    Logger.debug(state.topology, "initialising libcluster postgrex...")
+
     channel = Keyword.get(config, :channel, @default_channel)
     notifications = Map.fetch!(meta, :notifications)
     subscription = Notifications.listen!(notifications, channel, timeout: 10_000)
@@ -24,6 +28,7 @@ defmodule Cluster.Strategy.Postgres.Worker do
     {:ok, %State{state | :meta => meta}, 0}
   end
 
+  @impl true
   def handle_info(:timeout, state) do
     Process.send_after(self(), :heartbeat, 0)
     Process.send_after(self(), :sync, 0)
@@ -47,8 +52,12 @@ defmodule Cluster.Strategy.Postgres.Worker do
       {:ok, subscription} ->
         Notifications.unlisten(notifications, subscription)
 
-      {:error, reason} ->
-        Logger.info(state.topology, "sync failed: #{reason}")
+      {:eventually, subscription} ->
+        Logger.info(state.topology, "eventually received: #{inspect(subscription)}")
+        #Notifications.unlisten(notifications, subscription)
+
+      # {:error, reason} ->
+      #   Logger.info(state.topology, "sync failed: #{reason}")
     end
 
     Process.send_after(self(), :sync, :rand.uniform(5_000))
